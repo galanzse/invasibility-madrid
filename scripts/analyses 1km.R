@@ -10,70 +10,46 @@ library(mapSpain)
 library(landscapemetrics)
 
 
+# predictors
+source('scripts/predictors compilation.R')
 
 # study area
 madrid <- esp_get_ccaa('madrid',epsg="4326") %>% vect(); crs(madrid) <- 'epsg:4326'
 
-# rivers, project to get distance in meters
-hidrografia <- vect('C:/Users/user/Desktop/DH_Tajo/hi_tramocurso_l_ES030.shp') %>%
-  project('epsg:4326') %>% crop(madrid)
-# plot(hidrografia)
-
-# vehicle roads
-rails <- vect('C:/Users/user/Desktop/Carreteras Madrid/CNIG/RT_FFCC/rt_tramofc_linea.shp')
-roads <- vect('C:/Users/user/Desktop/Carreteras Madrid/CNIG/RT_VIARIA/rt_tramo_vial.shp'); crs(roads) <- 'epsg:4258'
-roads <- rbind(rails, roads) %>% project('epsg:4326')
-
-# pedestrian and cattle paths
-trails <- vect('C:/Users/user/Desktop/Carreteras Madrid/CAM/spacmsendasnaturaleza/SIGI_V_MA_SENDAS_VERDESLine.shp')[,'CDID'] %>% as.polygons()
-pecuarias <- vect('C:/Users/user/Desktop/Carreteras Madrid/CAM/spacmvpec2014/SIGI_MA_VIAS_PECUARIASPolygon.shp')[,'CDID']
-trails <- rbind(trails, pecuarias) %>% project('epsg:4326'); rm(pecuarias)
-
-# elevation
-elevation <- rast('C:/Users/user/Desktop/worldclim/wc2.1_30s_elev/wc2.1_30s_elev.tif')
-names(elevation) <- 'elevation'
-
-# mean productivity per raster cell along the study period
-Madrid_NPP <- rast('results/Madrid_NPP.tiff')
-
-# worldclim
-bioclim <- rast(list.files('C:/Users/user/Desktop/worldclim/wc2.1_30s_bio', full.names=T))
-names(bioclim) <- c("bio_1","bio_10","bio_11","bio_12","bio_13","bio_14","bio_15","bio_16","bio_17","bio_18","bio_19","bio_2","bio_3","bio_4","bio_5","bio_6","bio_7","bio_8","bio_9")
-
-# corine
-clc_madrid <- c(rast('results/clc_madrid/clc1990.tiff'), rast('results/clc_madrid/clc2000.tiff'), 
-            rast('results/clc_madrid/clc2006.tiff'), rast('results/clc_madrid/clc2012.tiff'),
-            rast('results/clc_madrid/clc2018.tiff'))
-names(clc_madrid) <- c('clc1990', 'clc2000', 'clc2006', 'clc2012', 'clc2018')
-new_levels <- levels(clc_madrid$clc1990)[[1]]; colnames(new_levels) <- c('value','label')
-
-
+# CLC levels for data wrangling
+new_levels <- expand.grid(c(1990,2000,2006,2012,2018), 1:12) %>%
+  merge(levels(clc_madrid$clc1990)[[1]], by.x='Var2', by.y='value') %>%
+  merge(data.frame(layer=1:5, year=c(1990,2000,2006,2012,2018)), by.x='Var1', by.y='year')
+colnames(new_levels) <- c('year','class','label','layer')
 
 # calculate predictors for every MGRS cell
-load("C:/Users/user/OneDrive/ACADEMICO/proyectos/ailanthus/results/atlas_data.RData")
+load("results/atlas_data.RData")
 mgrs_df <- atlas_data[['mgrs_centroids']] # dataframe to store results
 mgrs_grid <- vect('results/mgrs_grid.shp') # shapefile to extract polygons from
 
-# extract info from within polygons and save into mgrs_df ###
+
+# loop
 for (i in 1:nrow(mgrs_df)) {
   
-  # mgrs polygon
+  
+  # region of interest (roi): mgrs polygon
   pol1 <- mgrs_grid %>% terra::subset(mgrs_grid$MGRS==mgrs_df$MGRS[i])
   
-  # rivers
+  
+  # river length in meters within roi
   mgrs_df$strem_dens[i] <- terra::crop(hidrografia, pol1) %>% perim() %>% sum()
 
-  # roads
+  # road and trail length in meters within roi
   mgrs_df$road_dens[i] <- crop(roads,pol1) %>% perim() %>% sum()
   mgrs_df$trail_dens[i] <- crop(trails,pol1) %>% perim() %>% sum()
 
-  # elevation
+  # average elevation
   mgrs_df$elevation[i] <- terra::extract(x=elevation, y=pol1) %>% dplyr::select(elevation) %>% colMeans(na.rm=T)
 
-  # NPP
+  # net primary productivity
   mgrs_df$NPP[i] <- Madrid_NPP %>% terra::extract(y=pol1) %>% dplyr::select(annual_productivity) %>% colMeans(na.rm=T)
 
-  # bioclim
+  # climate characterisation
   mgrs_df$MAT[i] <- terra::extract(x=bioclim$bio_1, y=pol1) %>% dplyr::select(bio_1) %>% colMeans(na.rm=T)
   mgrs_df$MTCM[i] <- terra::extract(x=bioclim$bio_6, y=pol1) %>% dplyr::select(bio_6) %>% colMeans(na.rm=T)
   mgrs_df$TS[i] <- terra::extract(x=bioclim$bio_4, y=pol1) %>% dplyr::select(bio_4) %>% colMeans(na.rm=T)
@@ -82,44 +58,119 @@ for (i in 1:nrow(mgrs_df)) {
   mgrs_df$PS[i] <- terra::extract(x=bioclim$bio_15, y=pol1) %>% dplyr::select(bio_15) %>% colMeans(na.rm=T)
   
 
-  # landscape metrics
-  pol1 <- pol1 %>% project('epsg:3035') # work projected
-  clc_roi <- clc_madrid %>% crop(pol1, mask=T)
-  # check_landscape(clc_roi)
   
-  # historic accumulated land uses
-  clc_roi_df <- clc_roi %>% as.data.frame()
-  mgrs_df$n_luc[i] <- c(clc_roi_df$clc1990, clc_roi_df$clc2000, clc_roi_df$clc2006, clc_roi_df$clc2012, clc_roi_df$clc2018) %>% unique() %>% length()
+  # landscape metrics: crop CLC
+  clc_roi <- clc_madrid %>% crop(project(pol1, 'epsg:3035'), mask=T) # check_landscape(clc_roi)
+  
+  # accumulated land uses since 1990
+  clc_roi_df <- clc_roi %>% as.data.frame() %>% as.list()
+  mgrs_df$n_luc[i] <- do.call(c, clc_roi_df) %>% unique() %>% length()
 
-  # median landscape metrics
-  temp_landscape <- calculate_lsm(clc_roi, metric=c('pr','pd','shdi','ed'), level='landscape') %>%
-    dplyr::select(metric, value) %>% na.omit() # compute indices in paralel
-  temp_landscape <- aggregate(value~metric, FUN=median, data=temp_landscape) # median per index
-  mgrs_df$l_pr[i] <- temp_landscape$value[temp_landscape$metric=='pr'] # n of classes
-  mgrs_df$l_pd[i] <- temp_landscape$value[temp_landscape$metric=='pd'] # n of patches/area
-  mgrs_df$l_shdi[i] <- temp_landscape$value[temp_landscape$metric=='shdi'] # shannon
-  mgrs_df$l_ed[i] <- temp_landscape$value[temp_landscape$metric=='ed'] # edge / area
+  # compute landscape metrics and standardised area
+  landscape_all <- calculate_lsm(clc_roi, metric=c('pr','pd','shdi','ed','ca'), level=c('landscape','class'))
+  landscape_area <- lsm_l_ta(clc_roi) %>% summarise(value=mean(value)) %>% deframe()
+  landscape_all$value[landscape_all$metric=='ca'] <- landscape_all$value[landscape_all$metric=='ca']/landscape_area
+
+  
+  # mean landscape metrics over time series
+  landscape_means <- landscape_all %>% filter(level=='landscape') %>% group_by(metric) %>% summarise(value=mean(value))
+  mgrs_df$l_pr[i] <- landscape_means$value[landscape_means$metric=='pr'] # n of classes
+  mgrs_df$l_pd[i] <- landscape_means$value[landscape_means$metric=='pd'] # n of patches/area
+  mgrs_df$l_shdi[i] <- landscape_means$value[landscape_means$metric=='shdi'] # shannon
+  mgrs_df$l_ed[i] <- landscape_means$value[landscape_means$metric=='ed'] # edge / area
   
   
-  df_c_ca <- lsm_c_ca(clc_roi) %>% dplyr::select(metric, value, class) %>% na.omit() %>%
-    merge(new_levels, by.x='class', by.y='value', all.y=T) %>% dplyr::select(label, value)
+  # mean class areas over time series including zeroes
+  df_c_ca <- landscape_all %>% filter(level=='class' & metric=='ca') %>% dplyr::select(-id, -level) %>%
+    merge(unique(new_levels[,c('year','layer','class','label')]), all.y=T) %>%
+    dplyr::select(-layer, -class, -metric)
+  
+  # remove zeroes and compute means
   df_c_ca$value[is.na(df_c_ca$value)] <- 0
-  df_c_ca <- aggregate(value~label, FUN=median, data=df_c_ca)
+  df_c_ca <- aggregate(value~label, FUN=mean, df_c_ca) 
   
-  # median proportional land use
+  # extract areas
   mgrs_df$ca_arable[i] <- df_c_ca$value[df_c_ca$label=='Arable land']
-  mgrs_df$ca_complexc[i] <- df_c_ca$value[df_c_ca$label=='Complex cultivation']
   mgrs_df$ca_greenurban[i] <- df_c_ca$value[df_c_ca$label=='Green urban areas']
+  mgrs_df$ca_heterogagric[i] <- df_c_ca$value[df_c_ca$label=='Heterogeneous agricultural']
   mgrs_df$ca_industrial[i] <- df_c_ca$value[df_c_ca$label=='Industrial and transport']
-  mgrs_df$ca_grasslands[i] <- df_c_ca$value[df_c_ca$label=='Natural grasslands']
   mgrs_df$ca_woodlands[i] <- df_c_ca$value[df_c_ca$label=='Natural woodlands']
   mgrs_df$ca_other[i] <- df_c_ca$value[df_c_ca$label=='Other']
   mgrs_df$ca_pastures[i] <- df_c_ca$value[df_c_ca$label=='Pastures']
   mgrs_df$ca_crops[i] <- df_c_ca$value[df_c_ca$label=='Permanent crops']
-  mgrs_df$ca_seminatural[i] <- df_c_ca$value[df_c_ca$label=='Seminatural']
+  mgrs_df$ca_scrub[i] <- df_c_ca$value[df_c_ca$label=='Scrub and herbaceous']
   mgrs_df$ca_urban[i] <- df_c_ca$value[df_c_ca$label=='Urban']
 
 
+  
+  # evolution of landscape metrics
+  landscape_evolution <- landscape_all %>% filter(level=='landscape') %>%
+    dplyr::select(layer, metric, value) %>%
+    merge(unique(new_levels[,c('year','layer')])) %>% dplyr::select(-layer)
+  
+  # include period to group_by, summarise and calculate difference
+  landscape_evolution$period[landscape_evolution$year%in%c(1990,2000)] <- 'old'
+  landscape_evolution$period[landscape_evolution$year%in%c(2012,2018)] <- 'recent'
+  landscape_evolution <- landscape_evolution %>% group_by(metric, period) %>%
+    summarise(value=mean(value), .groups='drop_last') %>% na.omit %>%
+    pivot_wider(names_from=period, values_from=value)
+  landscape_evolution$diff <-  landscape_evolution$recent - landscape_evolution$old
+  
+  # extract difference
+  mgrs_df$d_l_pr[i] <- landscape_evolution$diff[landscape_evolution$metric=='pr']
+  mgrs_df$d_l_pd[i] <- landscape_evolution$diff[landscape_evolution$metric=='pd']
+  mgrs_df$d_l_shdi[i] <- landscape_evolution$diff[landscape_evolution$metric=='shdi']
+  mgrs_df$d_l_ed[i] <- landscape_evolution$diff[landscape_evolution$metric=='ed']
+  
+  
+  # evolution of class areas
+  df_c_ca <- landscape_all %>% filter(level=='class' & metric=='ca') %>%
+    dplyr::select(layer, class, value) %>%
+    merge(new_levels, all.y=T) %>%
+    dplyr::select(value, year, label)
+  
+  # replace NA, include period to group_by, summarise and calculate difference
+  df_c_ca$value[is.na(df_c_ca$value)] <- 0
+  df_c_ca$period[df_c_ca$year%in%c(1990,2000)] <- 'old'
+  df_c_ca$period[df_c_ca$year%in%c(2012,2018)] <- 'recent'
+  df_c_ca <- df_c_ca %>% na.omit() %>% group_by(label, period) %>%
+    summarise(value=mean(value), .groups='drop_last') %>%
+    pivot_wider(names_from=period, values_from=value)
+  df_c_ca$diff <-  df_c_ca$recent - df_c_ca$old
+  
+  #  extract difference
+  mgrs_df$dif_arable[i] <- df_c_ca$diff[df_c_ca$label=='Arable land']
+  mgrs_df$dif_greenurban[i] <- df_c_ca$diff[df_c_ca$label=='Green urban areas']
+  mgrs_df$dif_heterogagric[i] <- df_c_ca$diff[df_c_ca$label=='Heterogeneous agricultural']
+  mgrs_df$dif_industrial[i] <- df_c_ca$diff[df_c_ca$label=='Industrial and transport']
+  mgrs_df$dif_woodlands[i] <- df_c_ca$diff[df_c_ca$label=='Natural woodlands']
+  mgrs_df$dif_other[i] <- df_c_ca$diff[df_c_ca$label=='Other']
+  mgrs_df$dif_pastures[i] <- df_c_ca$diff[df_c_ca$label=='Pastures']
+  mgrs_df$dif_crops[i] <- df_c_ca$diff[df_c_ca$label=='Permanent crops']
+  mgrs_df$dif_scrub[i] <- df_c_ca$diff[df_c_ca$label=='Scrub and herbaceous']
+  mgrs_df$dif_urban[i] <- df_c_ca$diff[df_c_ca$label=='Urban']
+  
+  
+  # changes among land uses: get raw tally matrix for every period
+  v = data.frame(clc2000 = values(clc_roi$clc2000), clc2018 = values(clc_roi$clc2018)) %>% na.omit()
+  # reclassify
+  for (o in 1:nrow(new_levels)) { v[v==new_levels$class[o]] <- new_levels$label[o] }
+  # raw tally matrix
+  m = table(v[,c('clc2000','clc2018')])
+  # calculate transition matrix
+  P = as.matrix(m/sum(m))
+  # crop reference matrix
+  P_ref <- clc_reclassification[rownames(P),colnames(P)]
+  
+  # retrieve transition data
+  mgrs_df$LCF1[i] <- P[P_ref==1] %>% sum()
+  mgrs_df$LCF2[i] <- P[P_ref==2] %>% sum()
+  mgrs_df$LCF3[i] <- P[P_ref==3] %>% sum()
+  mgrs_df$LCF4[i] <- P[P_ref==4] %>% sum()
+  mgrs_df$LCF5[i] <- P[P_ref==5] %>% sum()
+  
+  
+  
   # progress
   print(paste(round(i/nrow(mgrs_df)*100,2), '%', sep=''))
   
