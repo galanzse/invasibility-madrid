@@ -53,7 +53,7 @@ atlas_taxonomy <- rgbif::name_backbone_checklist(name_data=unique(atlas_obs$spec
 # traits
 traits <- read_excel("data/AtlasFloraAloctonaMadrid.xlsx", sheet='traits') %>%
   as.data.frame() %>%
-  subset(species %in% unique(atlas_obs$species))
+  subset(species_atlas %in% unique(atlas_obs$species))
 
 
 

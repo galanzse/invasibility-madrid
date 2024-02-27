@@ -4,76 +4,79 @@
 
 
 library(tidyverse)
-library(terra)
-
+# library(terra)
 
 
 # import data
-load("C:/Users/user/OneDrive/ACADEMICO/proyectos/ailanthus/results/atlas_data.RData")
-mgrs_1km <- read.csv("results/mgrs_pred_1km.txt", sep="")
-atlas_pts <- vect(atlas_data[['observations']], geom=c('x','y')); crs(atlas_pts) <- 'epsg:4326'
+load("results/atlas_data.RData")
+pred_2.5km <- read.csv("results/pred_2.5km.txt", sep="")
+table(is.na(pred_2.5km))
+
+# variables of interest
+predictors <- colnames(pred_2.5km)[-which(colnames(pred_2.5km)%in%c('MGRS','x','y'))]
+
+# add info invaded/notinvaded
+pred_2.5km$invaded <- pred_2.5km$MGRS %in% atlas_data$observations$mgrs
+table(pred_2.5km$invaded)
+
+# points df
+atlas_pts <- vect(atlas_data$observations, geom=c('x','y')); crs(atlas_pts) <- 'epsg:4326'
 
 
-# exploratory
-table(is.na(mgrs_1km))
 
 # correlations bioclim
-# pairs(mgrs_1km[,c("MAT","MTCM","TS","AP","PDQ","PS")]) 
-
-# variables of interes
-predictors <- colnames(mgrs_1km)[-which(colnames(mgrs_1km)%in%c('MGRS','x','y','occupied'))]
+# pairs(pred_2.5km[,c("MAT","MTCM","TS","AP","PDQ","PS")],lower.panel=NULL)
 
 
 
-# first, explore proportion of occupied cells considering ALL cells
-occ_cells <- atlas_data[['observations']]$mgrs %>% unique() # occupied cells
-mgrs_1km$occupied[mgrs_1km$MGRS %in% occ_cells] <- 'y' # create new variable
-mgrs_1km$occupied[!(mgrs_1km$MGRS %in% occ_cells)] <- 'n'
-table(mgrs_1km$occupied)/nrow(mgrs_1km) # proportion of occupied cells
+# # remove FAR cells for accurate comparison
+# roi <- atlas_pts %>% buffer(width=700) %>% aggregate() # plot(atlas_pts); lines(roi)
+# roi <- vect('results/mgrs_grid.shp') %>% terra::crop(roi) %>%
+#   as.data.frame(xy=T) %>% dplyr::select(MGRS) %>% deframe() %>% unique()
+# mgrs_1km <- mgrs_1km %>% subset(MGRS %in% roi) # remove far cells
+# table(mgrs_1km$occupied)/nrow(mgrs_1km) # check similar proportion
 
-# second, remove FAR cells for accurate comparison
-roi <- atlas_pts %>% buffer(width=700) %>% aggregate() # plot(atlas_pts); lines(roi)
-roi <- vect('results/mgrs_grid.shp') %>% terra::crop(roi) %>%
-  as.data.frame(xy=T) %>% dplyr::select(MGRS) %>% deframe() %>% unique()
-mgrs_1km <- mgrs_1km %>% subset(MGRS %in% roi) # remove far cells
-table(mgrs_1km$occupied)/nrow(mgrs_1km) # check similar proportion
 
-par(mfrow=c(3,3)) # plot
+
+# df in long format
+pred_2.5km_long <- pred_2.5km %>% pivot_longer(all_of(predictors))
+pred_2.5km_long$invaded <- as.factor(pred_2.5km_long$invaded)
+levels(pred_2.5km_long$invaded) <- c('notinvaded','invaded')
+head(pred_2.5km_long)
+
+
+# plot invaded vs notinvaded
+par(mfrow=c(3,3))
 for (i in predictors) {
-  temp <- mgrs_1km %>% dplyr::select(occupied, i)
-  colnames(temp) <- c('occupied','predictor')
-  boxplot(predictor ~ occupied, data=temp, main=i) 
+  temp <- pred_2.5km_long %>% dplyr::filter(name==i)
+  boxplot(value ~ invaded, data=temp, main=i, xlab='')
 }
 
 
 
-# diferencias entre formas de vida
-diff_lifeforms <- atlas_data[['observations']][,c('mgrs','species')]
-diff_lifeforms$longevity <- as.factor(diff_lifeforms$longevity)
-diff_lifeforms$life_form <- as.factor(diff_lifeforms$life_form)
-levels(diff_lifeforms$life_form) <- c('C','G','HC','HY','PC','PS','PT','TH')
-
-diff_lifeforms <- diff_lifeforms %>%
-  merge(atlas_data[['traits']][,c('species_atlas','longevity','life_form')], all.x=T,
+# plot by life form
+pred_2.5km_traits <- atlas_data[['observations']][,c('mgrs','species')] %>%
+  merge(atlas_data[['traits']][,c('species_atlas','longevity','lifeform','raunkiaer')], all.x=T,
         by.x='species', by.y='species_atlas') %>%
-  merge(mgrs_1km, by.x='mgrs', by.y='MGRS')
+  merge(pred_2.5km, by.x='mgrs', by.y='MGRS')
+pred_2.5km_traits$longevity <- as.factor(pred_2.5km_traits$longevity)
+pred_2.5km_traits$lifeform <- as.factor(pred_2.5km_traits$lifeform)
+pred_2.5km_traits$raunkiaer <- as.factor(pred_2.5km_traits$raunkiaer)
+levels(pred_2.5km_traits$lifeform) <- c('AQ','F','GR','SH','TR')
 
-par(mfrow=c(3,3)) # plot
+# plot by longevity
+pred_2.5km_traits_long <- pred_2.5km_traits %>% pivot_longer(all_of(predictors))
+par(mfrow=c(3,3))
 for (i in predictors) {
-  temp <- diff_lifeforms %>% dplyr::select(longevity, i)
-  colnames(temp) <- c('longevity','predictor')
-  boxplot(predictor ~ longevity, data=temp, main=i) 
+  temp <- pred_2.5km_traits_long %>% dplyr::filter(name==i)
+  boxplot(value ~ longevity, data=temp, main=i, xlab='')
 }
 
-par(mfrow=c(3,3)) # plot
+# plot by lifeform
+par(mfrow=c(3,3))
 for (i in predictors) {
-  temp <- diff_lifeforms %>% dplyr::select(life_form, i)
-  levels(temp$life_form)
-  colnames(temp) <- c('life_form','predictor')
-  boxplot(predictor ~ life_form, data=temp, main=i) 
+  temp <- pred_2.5km_traits_long %>% dplyr::filter(name==i)
+  boxplot(value ~ lifeform, data=temp, main=i, xlab='')
 }
-
-
-
 
 

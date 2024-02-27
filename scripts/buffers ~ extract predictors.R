@@ -50,8 +50,16 @@ for (r in c(0.5,1,2.5,5)) { # buffer size in km
   for (i in 1:nrow(mgrs_df)) {
     
 
-    # for physical and climate variables lets use the mgrs grid
+    # for physical, transport and climate variables lets use the mgrs grid to account for a local effect
     pol1 <- mgrs_grid %>% terra::subset(mgrs_grid$MGRS==mgrs_df$MGRS[i])
+    
+    
+    # river length in meters within roi
+    mgrs_df$stream_dens[i] <- terra::crop(rivers, pol1) %>% perim() %>% sum()
+    
+    # road and trail length in meters within roi
+    mgrs_df$road_dens[i] <- crop(roads,pol1) %>% perim() %>% sum()
+    mgrs_df$trail_dens[i] <- crop(trails,pol1) %>% perim() %>% sum()
     
     # average elevation
     mgrs_df$elevation[i] <- terra::extract(x=elevation, y=pol1) %>% dplyr::select(elevation) %>% colMeans(na.rm=T)
@@ -73,14 +81,6 @@ for (r in c(0.5,1,2.5,5)) { # buffer size in km
     if (r<1) { pol1 <- mgrs_grid %>% terra::subset(mgrs_grid$MGRS==mgrs_df$MGRS[i])
     
     } else { pol1 <- vect(mgrs_df[i,], geom=c('x','y'), 'epsg:4326') %>% buffer(width=r*1000) }
-    
-    
-    # river length in meters within roi
-    mgrs_df$strem_dens[i] <- terra::crop(rivers, pol1) %>% perim() %>% sum()
-    
-    # road and trail length in meters within roi
-    mgrs_df$road_dens[i] <- crop(roads,pol1) %>% perim() %>% sum()
-    mgrs_df$trail_dens[i] <- crop(trails,pol1) %>% perim() %>% sum()
     
     
     # landscape metrics: crop CLC

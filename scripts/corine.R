@@ -76,10 +76,6 @@ clc_madrid <- c(clc1990, clc2000, clc2006, clc2012, clc2018)
 names(clc_madrid) <- c('clc1990', 'clc2000', 'clc2006', 'clc2012', 'clc2018')
 
 # save
-writeRaster(clc_madrid$clc1990, file='results/clc_madrid/clc1990.tiff', overwrite=TRUE)
-writeRaster(clc_madrid$clc2000, file='results/clc_madrid/clc2000.tiff', overwrite=TRUE)
-writeRaster(clc_madrid$clc2006, file='results/clc_madrid/clc2006.tiff', overwrite=TRUE)
-writeRaster(clc_madrid$clc2012, file='results/clc_madrid/clc2012.tiff', overwrite=TRUE)
-writeRaster(clc_madrid$clc2018, file='results/clc_madrid/clc2018.tiff', overwrite=TRUE)
+writeRaster(clc_madrid, 'results/predictors/clc_madrid.tiff', overwrite=T)
 
 
